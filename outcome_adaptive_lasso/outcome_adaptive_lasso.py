@@ -98,6 +98,7 @@ def calc_outcome_adaptive_lasso(
     amd_vec = np.zeros(len(lambdas))
     ate_vec = np.zeros(len(lambdas))
     selected_masks = []
+    x_coefs_all = []
 
     # Calculate ATE for each lambda
     for il, Lambda in enumerate(lambdas):
@@ -106,10 +107,12 @@ def calc_outcome_adaptive_lasso(
         )
         amd_vec[il] = calc_wamd(A, X, ipw, x_coefs)
         selected_masks.append(selected_mask)
+        x_coefs_all.append(x_coefs) 
 
     best_idx = np.argmin(amd_vec)
     best_ate = ate_vec[best_idx]
     best_selected_mask = selected_masks[best_idx]
+    best_x_coefs = x_coefs_all[best_idx]
 
     # Plot and save if requested
     if plot:
@@ -131,4 +134,4 @@ def calc_outcome_adaptive_lasso(
         plt.close()
         print(f"✅ Figure saved to: {save_path}")
 
-    return best_ate, amd_vec, ate_vec, best_selected_mask
+    return best_ate, amd_vec, ate_vec, best_selected_mask, best_x_coefs, x_coefs_all

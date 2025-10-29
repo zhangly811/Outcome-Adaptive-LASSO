@@ -8,6 +8,8 @@ from tqdm import tqdm
 import time
 from datetime import datetime
 import os
+import json
+from plotting import plot_outcome_selection_proportion
 
 from outcome_adaptive_lasso import calc_outcome_adaptive_lasso, generate_synthetic_dataset, calc_ate_vanilla_ipw
 
@@ -25,13 +27,30 @@ print(f"📁 Results will be saved to: {base_dir}")
 # Run simulation
 # ---------------------------------------------------------------------
 res_dict = defaultdict(list)
-selected_records = {"OAL": [], "Conf": [], "Targ": [], "PotConf": []}
+selected_records = {"OAL": [], "IPWX": [], "Conf": [], "Targ": [], "PotConf": []}
+selected_records_outcome = {"OAL": []}
 
 # Simulation parameters
-n, d = 100, 800
+n, d, nrep, rho, eta = 200, 100, 30, 0, 0
+scenario_num = 4
 
-for rep in tqdm(range(30), desc="Simulation Progress", ncols=80):
-    df = generate_synthetic_dataset(n=n, d=d, rho=0, eta=0, scenario_num=4)
+# Save parameters to a JSON file inside the results folder
+config = {
+    "n": n,
+    "d": d,
+    "nrep": nrep,
+    "rho": rho,
+    "eta": eta,
+    "scenario_num": scenario_num,
+    "timestamp": timestamp,
+}
+
+config_path = os.path.join(base_dir, "experiment_config.json")
+with open(config_path, "w") as f:
+    json.dump(config, f, indent=4)
+    
+for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
+    df = generate_synthetic_dataset(n=n, d=d, rho=rho, eta=eta, scenario_num=scenario_num)
 
     # Identify covariate subsets
     cols_Xc = [col for col in df if col.startswith("Xc")]
@@ -48,7 +67,7 @@ for rep in tqdm(range(30), desc="Simulation Progress", ncols=80):
 
     # --- Run Outcome Adaptive LASSO ---
     save_path = os.path.join(base_dir, f"wamd_vs_loglambda_rep{rep}.png") if rep < 5 else None
-    ate_oal, amd_vec, ate_vec, selected_mask_oal = calc_outcome_adaptive_lasso(
+    ate_oal, amd_vec, ate_vec, selected_mask_oal, best_x_coefs, x_coefs_all = calc_outcome_adaptive_lasso(
         df["A"], df["Y"], df[cols_all],
         plot=(rep < 5), save_path=save_path
     )
@@ -57,6 +76,30 @@ for rep in tqdm(range(30), desc="Simulation Progress", ncols=80):
     full_mask_oal = np.zeros(d)
     full_mask_oal[:len(selected_mask_oal)] = selected_mask_oal
 
+    # Save x_coefs for all lambdas in this replication
+    xcoef_dir = os.path.join(base_dir, "x_coefs")
+    os.makedirs(xcoef_dir, exist_ok=True)
+
+    # Optional: also save as CSV for inspection
+    xcoef_df = pd.DataFrame(x_coefs_all, columns=[col for col in df if col.startswith("X")])
+    xcoef_df["lambda_index"] = range(len(x_coefs_all))
+    xcoef_df.to_csv(os.path.join(xcoef_dir, f"x_coefs_rep{rep}.csv"), index=False)
+    
+    best_x_coefs_df = pd.DataFrame({
+    "coef_index": [col for col in df if col.startswith("X")],
+    "coef_value": best_x_coefs
+})
+    best_x_coefs_df.to_csv(os.path.join(xcoef_dir, f"x_coefs_best_rep{rep}.csv"), index=False)
+    
+    # selection mask for the outcome model
+    outcome_selected_mask = (np.abs(best_x_coefs) > 1e-8).astype(int)
+    selected_records_outcome["OAL"].append(outcome_selected_mask)
+
+    # --- Run IPW-based methods and map their selections into full d-space ---
+    ate_ipwx, selected_mask_ipwx = calc_ate_vanilla_ipw(df["A"], df["Y"], df[cols_all], return_selection=True)
+    full_mask_ipwx = np.zeros(d)
+    full_mask_ipwx[:len(selected_mask_ipwx)] = selected_mask_ipwx
+    
     # --- Run IPW-based methods and map their selections into full d-space ---
     ate_conf, mask_conf = calc_ate_vanilla_ipw(df["A"], df["Y"], df[cols_Xc], return_selection=True)
     full_mask_conf = np.zeros(d)
@@ -76,14 +119,15 @@ for rep in tqdm(range(30), desc="Simulation Progress", ncols=80):
 
     # Append to record
     selected_records["OAL"].append(full_mask_oal)
+    selected_records["IPWX"].append(full_mask_ipwx)
     selected_records["Conf"].append(full_mask_conf)
     selected_records["Targ"].append(full_mask_targ)
     selected_records["PotConf"].append(full_mask_pot_conf)
 
     # Save ATEs
-    res_dict["ate"].extend([ate_oal, ate_conf, ate_targ, ate_pot_conf])
-    res_dict["method"].extend(["OAL", "Conf", "Targ", "PotConf"])
-    res_dict["rep"].extend(4 * [rep])
+    res_dict["ate"].extend([ate_oal, ate_ipwx, ate_conf, ate_targ, ate_pot_conf])
+    res_dict["method"].extend(["OAL", "IPWX", "Conf", "Targ", "PotConf"])
+    res_dict["rep"].extend(5 * [rep])
 
 # ---------------------------------------------------------------------
 # Aggregate and save summary results
@@ -106,11 +150,12 @@ plt.close()
 print(f"✅ Boxplot saved: {os.path.join(base_dir, 'compare_oal_ipw_output.png')}")
 
 # ---------------------------------------------------------------------
-# Selection proportion plots
+# Selection proportion plots of propensity score models
 # ---------------------------------------------------------------------
 plt.figure(figsize=(8, 5))
 styles = {
     "OAL": ("black", "-", 2),
+    "IPWX": ("green", "--", 1.5),
     "Conf": ("red", "--", 1.5),
     "Targ": ("blue", ":", 1.5),
     "PotConf": ("orange", "-.", 1.5),
@@ -139,4 +184,14 @@ plt.savefig(sel_fig_path, dpi=300)
 plt.close()
 print(f"✅ Selection proportion plot saved: {sel_fig_path}")
 
+plot_outcome_selection_proportion(
+    selected_records_outcome,
+    base_dir=base_dir,
+    d=d,
+    cols_Xc=cols_Xc,
+    cols_Xp=cols_Xp,
+    cols_Xi=cols_Xi
+)
+
 print("🎉 Simulation completed successfully.")
+
