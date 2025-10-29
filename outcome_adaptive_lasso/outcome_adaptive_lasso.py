@@ -5,7 +5,7 @@ import os
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from math import log
 from causallib.estimation import IPW
-
+import pdb
 
 def check_input(A, Y, X):
     if not isinstance(A, pd.Series):
@@ -40,17 +40,28 @@ def calc_ate_vanilla_ipw(A, Y, X, return_selection=False):
         return effect[0]
 
 
-
-def calc_group_diff(X, idx_trt, ipw, l_norm):
+# def calc_covariate_diff(X, idx_trt, ipw, l_norm):
+#     """Utility function to calculate the difference in covariates between treatment and control groups"""
+#     return (np.abs(np.average(X[idx_trt], weights=ipw[idx_trt], axis=0) -
+#                    np.average(X[~idx_trt], weights=ipw[~idx_trt], axis=0)))**l_norm
+    
+def calc_amd_per_covariate(X, A, ipw, l_norm=1):
     """Utility function to calculate the difference in covariates between treatment and control groups"""
+    idx_trt = A == 1
     return (np.abs(np.average(X[idx_trt], weights=ipw[idx_trt], axis=0) -
                    np.average(X[~idx_trt], weights=ipw[~idx_trt], axis=0)))**l_norm
 
-
-def calc_wamd(A, X, ipw, x_coefs, l_norm=1):
-    """Utility function to calculate the weighted absolute mean difference"""
+def calc_wamd_per_covariate(X, A, ipw, betas_hat, l_norm=1):
+    """Utility function to calculate the difference in covariates between treatment and control groups"""
     idx_trt = A == 1
-    return calc_group_diff(X.values, idx_trt.values, ipw.values, l_norm).dot(np.abs(x_coefs))
+    return (np.abs(np.average(X[idx_trt], weights=ipw[idx_trt], axis=0) -
+                   np.average(X[~idx_trt], weights=ipw[~idx_trt], axis=0)))**l_norm * np.abs(betas_hat)
+    
+def calc_amd(X, A, ipw, betas_hat, l_norm=1):
+    return np.sum(calc_amd_per_covariate(X, A, ipw, betas_hat, l_norm))
+
+def calc_wamd(X, A, ipw, betas_hat, l_norm=1):
+    return np.sum(calc_wamd_per_covariate(X, A, ipw, betas_hat, l_norm))
 
 
 def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence_factor):
@@ -63,9 +74,9 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence
     XA = X.merge(A.to_frame(), left_index=True, right_index=True)
     lr = LinearRegression(fit_intercept=True).fit(XA, Y)
     # extract the coefficients of the covariates
-    x_coefs = lr.coef_.flatten()[1:]
+    betas_hat = lr.coef_.flatten()[1:]
     # calculate outcome adaptive penalization weights
-    weights = (np.abs(x_coefs)) ** (-1 * gamma)
+    weights = (np.abs(betas_hat)) ** (-1 * gamma)
     # apply the penalization to the covariates themselves
     X_w = X / weights
     
@@ -78,16 +89,21 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence
     weights = ipw.compute_weights(X_w, A)
     outcomes = ipw.estimate_population_outcome(X_w, A, Y, w=weights)
     effect = ipw.estimate_effect(outcomes[1], outcomes[0])
-    return effect, x_coefs, weights, selected_mask
+    return effect, betas_hat, weights, selected_mask
 
 
 def calc_outcome_adaptive_lasso(
-    A, Y, X, gamma_convergence_factor=2, log_lambdas=None, 
-    plot=True, save_path=None
-):
+    A, Y, X, rep, gamma_convergence_factor=2, log_lambdas=None, 
+    plot=True, amd_save_path=None, wamd_save_path=None, plot_save_path=None):
     """Calculate estimate of average treatment effect using the outcome adaptive LASSO (Shortreed and Ertefaie, 2017).
     Optionally save the AMD vs log(lambda) figure.
     """
+    # Determine save path
+    if amd_save_path is None:
+        amd_save_path = os.path.join(os.getcwd())
+    if wamd_save_path is None:
+        wamd_save_path = os.path.join(os.getcwd())
+        
     A, Y, X = check_input(A, Y, X)
 
     if log_lambdas is None:
@@ -96,28 +112,48 @@ def calc_outcome_adaptive_lasso(
     n = A.shape[0]
     lambdas = n ** np.array(log_lambdas)
     amd_vec = np.zeros(len(lambdas))
+    wamd_vec = np.zeros(len(lambdas))
     ate_vec = np.zeros(len(lambdas))
     selected_masks = []
-    x_coefs_all = []
+    betas_hat_all = []
 
     # Calculate ATE for each lambda
     for il, Lambda in enumerate(lambdas):
-        ate_vec[il], x_coefs, ipw, selected_mask = calc_outcome_adaptive_lasso_single_lambda(
+        ate_vec[il], betas_hat, ipw, selected_mask = calc_outcome_adaptive_lasso_single_lambda(
             A, Y, X, Lambda, gamma_convergence_factor
         )
-        amd_vec[il] = calc_wamd(A, X, ipw, x_coefs)
+        amd_after_per_covariate = calc_amd_per_covariate(X.values, A.values, ipw.values)
+        wamd_after_per_covariate = calc_wamd_per_covariate(X.values, A.values, ipw.values, betas_hat)
+        amd_after = np.sum(amd_after_per_covariate)
+        wamd_after = np.sum(wamd_after_per_covariate)
+        # save calculated_group_diff
+        # [WRITE CODE TO SAVE amd_per_covariate AND wamd_per_covariate for each lambda]
+        amd_vec[il] = amd_after
+        wamd_vec[il] = wamd_after
         selected_masks.append(selected_mask)
-        x_coefs_all.append(x_coefs) 
+        betas_hat_all.append(betas_hat) 
+        
+        # save amd_after_per_covariate and wamd_after_per_covariate for each lambda
+        amd_after_df = pd.DataFrame({
+            "covariate_index": [col for col in X.columns],
+            "amd_after": amd_after_per_covariate
+        })
+        amd_after_df.to_csv(os.path.join(amd_save_path, f"amd_after_per_covariate_rep{rep}_lambda{il}.csv"), index=False)
+        wamd_after_df = pd.DataFrame({
+            "covariate_index": [col for col in X.columns],
+            "wamd_after": wamd_after_per_covariate
+        })
+        wamd_after_df.to_csv(os.path.join(wamd_save_path, f"wamd_after_per_covariate_rep{rep}_lambda{il}.csv"), index=False)
 
-    best_idx = np.argmin(amd_vec)
+    best_idx = np.argmin(wamd_vec)
     best_ate = ate_vec[best_idx]
     best_selected_mask = selected_masks[best_idx]
-    best_x_coefs = x_coefs_all[best_idx]
+    best_betas_hat = betas_hat_all[best_idx]
 
     # Plot and save if requested
     if plot:
         plt.figure(figsize=(7, 4))
-        plt.plot(log_lambdas, amd_vec, marker='o', color='steelblue')
+        plt.plot(log_lambdas, wamd_vec, marker='o', color='steelblue')
         plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
         plt.title("Weighted Absolute Mean Difference vs log(Lambda)")
         plt.xlabel("log(Lambda)")
@@ -127,11 +163,32 @@ def calc_outcome_adaptive_lasso(
         plt.tight_layout()
 
         # Determine save path
-        if save_path is None:
-            save_path = os.path.join(os.getcwd(), "wamd_vs_loglambda.png")
+        if plot_save_path is None:
+            plot_save_path = os.path.join(os.getcwd(), "wamd_vs_loglambda.png")
 
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(os.path.join(plot_save_path, f"wamd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
         plt.close()
-        print(f"✅ Figure saved to: {save_path}")
+        print(f"✅ Figure saved to: {plot_save_path}")
 
-    return best_ate, amd_vec, ate_vec, best_selected_mask, best_x_coefs, x_coefs_all
+    # Plot and save if requested
+    if plot:
+        plt.figure(figsize=(7, 4))
+        plt.plot(log_lambdas, amd_vec, marker='o', color='steelblue')
+        plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
+        plt.title("Absolute Mean Difference vs log(Lambda)")
+        plt.xlabel("log(Lambda)")
+        plt.ylabel("Absolute Mean Difference (AMD)")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        # Determine save path
+        if plot_save_path is None:
+            plot_save_path = os.path.join(os.getcwd(), f"amd_vs_loglambda_rep{rep}.png")
+    
+        plt.savefig(os.path.join(plot_save_path, f"amd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"✅ Figure saved to: {plot_save_path}")
+    
+
+    return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat, betas_hat_all

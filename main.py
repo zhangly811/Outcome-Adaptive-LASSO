@@ -9,9 +9,9 @@ import time
 from datetime import datetime
 import os
 import json
-from plotting import plot_outcome_selection_proportion
+from plotting import plot_ate_comparison, plot_treatment_selection_proportion, plot_outcome_selection_proportion
 
-from outcome_adaptive_lasso import calc_outcome_adaptive_lasso, generate_synthetic_dataset, calc_ate_vanilla_ipw
+from outcome_adaptive_lasso import calc_outcome_adaptive_lasso, generate_synthetic_dataset, calc_ate_vanilla_ipw, calc_wamd_per_covariate, calc_amd_per_covariate
 
 warnings.filterwarnings(action='ignore') # ignore sklearn's ConvergenceWarning
 
@@ -21,17 +21,26 @@ warnings.filterwarnings(action='ignore') # ignore sklearn's ConvergenceWarning
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 base_dir = os.path.join("res", timestamp)
 os.makedirs(base_dir, exist_ok=True)
+# Save betas_hat for all lambdas in this replication
+betas_hat_dir = os.path.join(base_dir, "betas_hat")
+os.makedirs(betas_hat_dir, exist_ok=True)
+# Save amd for all lambdas in this replication
+amd_dir = os.path.join(base_dir, "amd")
+os.makedirs(amd_dir, exist_ok=True)
+# Save wamd for all lambdas in this replication
+wamd_dir = os.path.join(base_dir, "wamd")
+os.makedirs(wamd_dir, exist_ok=True)
 print(f"📁 Results will be saved to: {base_dir}")
 
 # ---------------------------------------------------------------------
 # Run simulation
 # ---------------------------------------------------------------------
 res_dict = defaultdict(list)
-selected_records = {"OAL": [], "IPWX": [], "Conf": [], "Targ": [], "PotConf": []}
-selected_records_outcome = {"OAL": []}
+selected_covariates_treatment = {"OAL": [], "IPWX": [], "Conf": [], "Targ": [], "PotConf": []}
+selected_covariates_outcome = {"OAL": []}
 
 # Simulation parameters
-n, d, nrep, rho, eta = 200, 100, 30, 0, 0
+n, d, nrep, rho, eta = 200, 500, 30, 0, 0
 scenario_num = 4
 
 # Save parameters to a JSON file inside the results folder
@@ -65,52 +74,83 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     idx_Xi = np.arange(len(cols_Xc) + len(cols_Xp),
                        len(cols_Xc) + len(cols_Xp) + len(cols_Xi))
 
+    # --- Calculate AMD and wAMD before propensity weighting ---
+    A_values = df["A"].values
+    X_values = df[cols_all].values
+    ipw_unweighted = np.ones_like(A_values)
+    amd_before_per_covariate = calc_amd_per_covariate(X_values, A_values, ipw_unweighted)
+    amd_before = np.sum(amd_before_per_covariate)
+    # save amd_before_per_covariate and amd_before as csv
+    amd_before_df = pd.DataFrame({
+        "covariate_index": [col for col in df if col.startswith("X")],
+        "amd_before": amd_before_per_covariate
+    })
+    amd_before_df.to_csv(os.path.join(amd_dir, f"amd_before_per_covariate_rep{rep}.csv"), index=False)
+    with open(os.path.join(amd_dir, f"amd_before_rep{rep}.txt"), "w") as f:
+        f.write(str(amd_before))
+    
     # --- Run Outcome Adaptive LASSO ---
-    save_path = os.path.join(base_dir, f"wamd_vs_loglambda_rep{rep}.png") if rep < 5 else None
-    ate_oal, amd_vec, ate_vec, selected_mask_oal, best_x_coefs, x_coefs_all = calc_outcome_adaptive_lasso(
-        df["A"], df["Y"], df[cols_all],
-        plot=(rep < 5), save_path=save_path
+    # plot_save_path = os.path.join(base_dir, f"rep{rep}") if rep < 5 else None
+    ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat, betas_hat_all = calc_outcome_adaptive_lasso(
+        df["A"], df["Y"], df[cols_all], rep,
+        plot=(rep < 5), 
+        amd_save_path=amd_dir, 
+        wamd_save_path=wamd_dir,
+        plot_save_path=base_dir
     )
-
+    
+    wamd_before_per_covariate = calc_wamd_per_covariate(X_values, A_values, ipw_unweighted, best_betas_hat)
+    wamd_before = np.sum(wamd_before_per_covariate)
+    # save wamd_before_per_covariate and wamd_before as csv
+    wamd_before_df = pd.DataFrame({
+        "covariate_index": [col for col in df if col.startswith("X")],
+        "wamd_before": wamd_before_per_covariate
+    })
+    wamd_before_df.to_csv(os.path.join(wamd_dir, f"wamd_before_per_covariate_rep{rep}.csv"), index=False)
+    with open(os.path.join(wamd_dir, f"wamd_before_rep{rep}.txt"), "w") as f:
+        f.write(str(wamd_before))
+        
     # Map OAL selection (already covers all covariates)
     full_mask_oal = np.zeros(d)
     full_mask_oal[:len(selected_mask_oal)] = selected_mask_oal
 
-    # Save x_coefs for all lambdas in this replication
-    xcoef_dir = os.path.join(base_dir, "x_coefs")
-    os.makedirs(xcoef_dir, exist_ok=True)
+    # Save betas_hat for all lambdas in this replication
+    betas_hat_dir = os.path.join(base_dir, "betas_hat")
+    os.makedirs(betas_hat_dir, exist_ok=True)
 
     # Optional: also save as CSV for inspection
-    xcoef_df = pd.DataFrame(x_coefs_all, columns=[col for col in df if col.startswith("X")])
-    xcoef_df["lambda_index"] = range(len(x_coefs_all))
-    xcoef_df.to_csv(os.path.join(xcoef_dir, f"x_coefs_rep{rep}.csv"), index=False)
+    betas_hat_df = pd.DataFrame(betas_hat_all, columns=[col for col in df if col.startswith("X")])
+    betas_hat_df["lambda_index"] = range(len(betas_hat_all))
+    betas_hat_df.to_csv(os.path.join(betas_hat_dir, f"betas_hat_rep{rep}.csv"), index=False)
     
-    best_x_coefs_df = pd.DataFrame({
+    best_betas_hat_df = pd.DataFrame({
     "coef_index": [col for col in df if col.startswith("X")],
-    "coef_value": best_x_coefs
-})
-    best_x_coefs_df.to_csv(os.path.join(xcoef_dir, f"x_coefs_best_rep{rep}.csv"), index=False)
+    "coef_value": best_betas_hat
+    })
+    best_betas_hat_df.to_csv(os.path.join(betas_hat_dir, f"betas_hat_best_rep{rep}.csv"), index=False)
     
     # selection mask for the outcome model
-    outcome_selected_mask = (np.abs(best_x_coefs) > 1e-8).astype(int)
-    selected_records_outcome["OAL"].append(outcome_selected_mask)
+    outcome_selected_mask = (np.abs(best_betas_hat) > 1e-8).astype(int)
+    selected_covariates_outcome["OAL"].append(outcome_selected_mask)
 
-    # --- Run IPW-based methods and map their selections into full d-space ---
+    # --- Run IPW-based methods with ALL covariates ---
     ate_ipwx, selected_mask_ipwx = calc_ate_vanilla_ipw(df["A"], df["Y"], df[cols_all], return_selection=True)
     full_mask_ipwx = np.zeros(d)
     full_mask_ipwx[:len(selected_mask_ipwx)] = selected_mask_ipwx
     
-    # --- Run IPW-based methods and map their selections into full d-space ---
+    # --- Run IPW-based methods with confounders ---
     ate_conf, mask_conf = calc_ate_vanilla_ipw(df["A"], df["Y"], df[cols_Xc], return_selection=True)
     full_mask_conf = np.zeros(d)
     full_mask_conf[idx_Xc] = mask_conf
 
+    # --- Run IPW-based methods with confounders and predictors ---
     ate_targ, mask_targ = calc_ate_vanilla_ipw(
         df["A"], df["Y"], df[cols_Xc + cols_Xp], return_selection=True
     )
     full_mask_targ = np.zeros(d)
     full_mask_targ[np.concatenate([idx_Xc, idx_Xp])] = mask_targ
 
+    # --- Run IPW-based methods with confounders, predictors, and instruments ---
     ate_pot_conf, mask_pot_conf = calc_ate_vanilla_ipw(
         df["A"], df["Y"], df[cols_Xc + cols_Xp + cols_Xi], return_selection=True
     )
@@ -118,11 +158,11 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     full_mask_pot_conf[np.concatenate([idx_Xc, idx_Xp, idx_Xi])] = mask_pot_conf
 
     # Append to record
-    selected_records["OAL"].append(full_mask_oal)
-    selected_records["IPWX"].append(full_mask_ipwx)
-    selected_records["Conf"].append(full_mask_conf)
-    selected_records["Targ"].append(full_mask_targ)
-    selected_records["PotConf"].append(full_mask_pot_conf)
+    selected_covariates_treatment["OAL"].append(full_mask_oal)
+    selected_covariates_treatment["IPWX"].append(full_mask_ipwx)
+    selected_covariates_treatment["Conf"].append(full_mask_conf)
+    selected_covariates_treatment["Targ"].append(full_mask_targ)
+    selected_covariates_treatment["PotConf"].append(full_mask_pot_conf)
 
     # Save ATEs
     res_dict["ate"].extend([ate_oal, ate_ipwx, ate_conf, ate_targ, ate_pot_conf])
@@ -135,57 +175,15 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
 df_res = pd.DataFrame(res_dict)
 summary_path = os.path.join(base_dir, "simulation_summary.csv")
 df_res.to_csv(summary_path, index=False)
-print(f"✅ Results table saved: {summary_path}")
+print(f"✅ ATE results table saved: {summary_path}")
 
 # ---------------------------------------------------------------------
-# Boxplot: ATE comparison
+# 📊 Generate and save plots
 # ---------------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(8, 8))
-sns.boxplot(x="method", y="ate", data=df_res, ax=ax, palette=sns.color_palette("Set1"))
-ax.grid(True, alpha=0.3)
-ax.set_title("Outcome Adaptive LASSO vs IPW alternatives")
-plt.tight_layout()
-fig.savefig(os.path.join(base_dir, "compare_oal_ipw_output.png"), dpi=300)
-plt.close()
-print(f"✅ Boxplot saved: {os.path.join(base_dir, 'compare_oal_ipw_output.png')}")
-
-# ---------------------------------------------------------------------
-# Selection proportion plots of propensity score models
-# ---------------------------------------------------------------------
-plt.figure(figsize=(8, 5))
-styles = {
-    "OAL": ("black", "-", 2),
-    "IPWX": ("green", "--", 1.5),
-    "Conf": ("red", "--", 1.5),
-    "Targ": ("blue", ":", 1.5),
-    "PotConf": ("orange", "-.", 1.5),
-}
-
-for method, (color, ls, lw) in styles.items():
-    sel_matrix = np.vstack(selected_records[method])
-    selection_proportion = sel_matrix.mean(axis=0)
-    x = np.arange(1, d + 1)
-    plt.plot(x, selection_proportion, color=color, linestyle=ls, linewidth=lw, label=method)
-
-# Optional: add vertical lines marking the subset boundaries
-plt.axvline(len(cols_Xc), color="gray", linestyle="--", alpha=0.4)
-plt.axvline(len(cols_Xc) + len(cols_Xp), color="gray", linestyle="--", alpha=0.4)
-plt.axvline(len(cols_Xc) + len(cols_Xp) + len(cols_Xi), color="gray", linestyle="--", alpha=0.4)
-
-plt.xlabel("Covariate index")
-plt.ylabel("Proportion of times covariate selected")
-plt.ylim(0, 1.05)
-plt.legend(frameon=False)
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-
-sel_fig_path = os.path.join(base_dir, "selection_proportion_comparison.png")
-plt.savefig(sel_fig_path, dpi=300)
-plt.close()
-print(f"✅ Selection proportion plot saved: {sel_fig_path}")
-
+plot_ate_comparison(df_res, base_dir)
+plot_treatment_selection_proportion(selected_covariates_treatment, base_dir, d, cols_Xc, cols_Xp, cols_Xi)
 plot_outcome_selection_proportion(
-    selected_records_outcome,
+    selected_covariates_outcome,
     base_dir=base_dir,
     d=d,
     cols_Xc=cols_Xc,
