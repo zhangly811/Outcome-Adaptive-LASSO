@@ -1,5 +1,7 @@
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
+import os
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from math import log
 from causallib.estimation import IPW
@@ -22,12 +24,21 @@ def check_input(A, Y, X):
     return A, Y, X
 
 
-def calc_ate_vanilla_ipw(A, Y, X):
-    ipw = IPW(LogisticRegression(solver='liblinear', penalty='l1', C=1e2, max_iter=500), use_stabilized=True).fit(X, A)
+def calc_ate_vanilla_ipw(A, Y, X, return_selection=False):
+    """Estimate ATE using IPW with L1-penalized logistic regression.
+    If return_selection=True, also return a binary vector indicating selected covariates."""
+    logit = LogisticRegression(solver='liblinear', penalty='l1', C=1e2, max_iter=500)
+    ipw = IPW(logit, use_stabilized=True).fit(X, A)
     weights = ipw.compute_weights(X, A)
     outcomes = ipw.estimate_population_outcome(X, A, Y, w=weights)
     effect = ipw.estimate_effect(outcomes[1], outcomes[0])
-    return effect[0]
+
+    if return_selection:
+        selected_mask = (np.abs(logit.coef_.flatten()) > 1e-8).astype(int)
+        return effect[0], selected_mask
+    else:
+        return effect[0]
+
 
 
 def calc_group_diff(X, idx_trt, ipw, l_norm):
@@ -47,7 +58,8 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence
     n = A.shape[0]  # number of samples
     # extract gamma according to Lambda and gamma_convergence_factor
     gamma = 2 * (1 + gamma_convergence_factor - log(Lambda, n))
-    # fit regression from covariates X and exposure A to outcome Y
+    
+    # fit # Outcome model
     XA = X.merge(A.to_frame(), left_index=True, right_index=True)
     lr = LinearRegression(fit_intercept=True).fit(XA, Y)
     # extract the coefficients of the covariates
@@ -56,48 +68,67 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence
     weights = (np.abs(x_coefs)) ** (-1 * gamma)
     # apply the penalization to the covariates themselves
     X_w = X / weights
+    
     # fit logistic propensity score model from penalized covariates to the exposure
-    ipw = IPW(LogisticRegression(solver='liblinear', penalty='l1', C=1/Lambda), use_stabilized=False).fit(X_w, A)
+    logit = LogisticRegression(solver='liblinear', penalty='l1', C=1/Lambda)
+    ipw = IPW(logit, use_stabilized=False).fit(X_w, A)
+    # Selection indicator (nonzero coefficients)
+    selected_mask = (np.abs(logit.coef_.flatten()) > 1e-8).astype(int)
     # compute inverse propensity weighting and calculate ATE
     weights = ipw.compute_weights(X_w, A)
     outcomes = ipw.estimate_population_outcome(X_w, A, Y, w=weights)
     effect = ipw.estimate_effect(outcomes[1], outcomes[0])
-    return effect, x_coefs, weights
+    return effect, x_coefs, weights, selected_mask
 
 
-def calc_outcome_adaptive_lasso(A, Y, X, gamma_convergence_factor=2, log_lambdas=None):
-    """Calculate estimate of average treatment effect using the outcome adaptive LASSO (Shortreed and Ertefaie, 2017)
-    Parameters
-    ----------
-    A : Exposure (=treatment, intervention) - pandas series or one-dimensional numpy array
-    Y : Outcome - pandas series or one-dimensional numpy array
-    X : Covariates - pandas dataframe or two-dimensional numpy array (shape n_samples, n_covariates)
-    log_lambdas : log of lambda - strength of adaptive LASSO regularization.
-        If log_lambdas has multiple values, lambda will be selected according to the minimal absolute mean difference,
-        as suggested in the paper
-        If None, it will be set to the suggested search list in the paper:
-        [-10, -5, -2, -1, -0.75, -0.5, -0.25, 0.25, 0.49]
-    gamma_convergence_factor : a constant to couple between lambda and gamma, the single-feature penalization strength
-        The equation relating gamma and lambda is lambda * n^(gamma/2 -1) = n^gamma_convergence_factor
-        Default value is 2, as suggested in the paper for the synthetic dataset experiments
-    Returns
-    -------
-    ate : estimate of the average treatment effect
+def calc_outcome_adaptive_lasso(
+    A, Y, X, gamma_convergence_factor=2, log_lambdas=None, 
+    plot=True, save_path=None
+):
+    """Calculate estimate of average treatment effect using the outcome adaptive LASSO (Shortreed and Ertefaie, 2017).
+    Optionally save the AMD vs log(lambda) figure.
     """
-
     A, Y, X = check_input(A, Y, X)
 
     if log_lambdas is None:
         log_lambdas = [-10, -5, -2, -1, -0.75, -0.5, -0.25, 0.25, 0.49]
+
     n = A.shape[0]
     lambdas = n ** np.array(log_lambdas)
-    amd_vec = np.zeros(lambdas.shape[0])
-    ate_vec = np.zeros(lambdas.shape[0])
+    amd_vec = np.zeros(len(lambdas))
+    ate_vec = np.zeros(len(lambdas))
+    selected_masks = []
 
-    # Calculate ATE for each lambda, select the one minimizing the weighted absolute mean difference
-    for il in range(len(lambdas)):
-        ate_vec[il], x_coefs, ipw = \
-            calc_outcome_adaptive_lasso_single_lambda(A, Y, X, lambdas[il], gamma_convergence_factor)
+    # Calculate ATE for each lambda
+    for il, Lambda in enumerate(lambdas):
+        ate_vec[il], x_coefs, ipw, selected_mask = calc_outcome_adaptive_lasso_single_lambda(
+            A, Y, X, Lambda, gamma_convergence_factor
+        )
         amd_vec[il] = calc_wamd(A, X, ipw, x_coefs)
+        selected_masks.append(selected_mask)
 
-    return ate_vec[np.argmin(amd_vec)]
+    best_idx = np.argmin(amd_vec)
+    best_ate = ate_vec[best_idx]
+    best_selected_mask = selected_masks[best_idx]
+
+    # Plot and save if requested
+    if plot:
+        plt.figure(figsize=(7, 4))
+        plt.plot(log_lambdas, amd_vec, marker='o', color='steelblue')
+        plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
+        plt.title("Weighted Absolute Mean Difference vs log(Lambda)")
+        plt.xlabel("log(Lambda)")
+        plt.ylabel("Weighted Absolute Mean Difference (wAMD)")
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+
+        # Determine save path
+        if save_path is None:
+            save_path = os.path.join(os.getcwd(), "wamd_vs_loglambda.png")
+
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"✅ Figure saved to: {save_path}")
+
+    return best_ate, amd_vec, ate_vec, best_selected_mask

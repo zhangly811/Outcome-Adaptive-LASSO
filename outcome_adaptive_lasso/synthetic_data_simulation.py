@@ -7,9 +7,9 @@ from sklearn.preprocessing import StandardScaler
 def generate_col_names(d):
     """Utility function to generate column names for the synthetic dataset """
     assert (d >= 6)
-    pC = 2  # number of confounders
-    pP = 2  # number of outcome predictors
-    pI = 2  # number of exposure predictors
+    pC = int(d*0.02)  # number of confounders
+    pP = int(d*0.02)  # number of outcome predictors
+    pI = int(d*0.02)  # number of exposure predictors
     pS = d - (pC + pI + pP)  # number of spurious covariates
     col_names = ['A', 'Y'] + [f'Xc{i}' for i in range(1, pC + 1)] + [f'Xp{i}' for i in range(1, pP + 1)] + \
                 [f'Xi{i}' for i in range(1, pI + 1)] + [f'Xs{i}' for i in range(1, pS + 1)]
@@ -17,10 +17,16 @@ def generate_col_names(d):
 
 
 def load_dgp_scenario(scenario, d):
-    """Utility function to load predefined scenarios"""
-    confounder_indexes = [1, 2]
-    predictor_indexes = [3, 4]
-    exposure_indexes = [5, 6]
+    """Utility function to load predefined scenarios with variable dimension d.
+    The first 2% of d are confounders, the next 2% are predictors, 
+    and the next 2% are exposures.
+    """
+    n_each = max(2, int(0.02 * d))  # ensure at least 1 variable per group
+
+    confounder_indexes = np.arange(0, n_each)
+    predictor_indexes = np.arange(n_each, 2 * n_each)
+    exposure_indexes = np.arange(2 * n_each, 3 * n_each)
+
     nu = np.zeros(d)
     beta = np.zeros(d)
     if scenario == 1:
@@ -79,7 +85,7 @@ def generate_synthetic_dataset(n=1000, d=100, rho=0, eta=0, scenario_num=1):
     # Normalize covariates to have 0 mean unit std
     scaler = StandardScaler(copy=False)
     scaler.fit_transform(X)
-
+ 
     # Load beta and nu from the predefined scenarios
     beta, nu = load_dgp_scenario(scenario_num, d)
     A = np.random.binomial(np.ones(n, dtype=int), expit(np.dot(X, nu)))
