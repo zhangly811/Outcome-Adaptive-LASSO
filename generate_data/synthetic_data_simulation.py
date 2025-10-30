@@ -36,24 +36,24 @@ def load_dgp_scenario(scenario, d, prop_confounders=0.1, prop_predictors=0.1, pr
     if scenario == 1:
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 1*5/n_conf
-        nu[instrument_indexes] = 1*5/n_instr
+        nu[confounder_indexes] = 1*20/n_conf
+        nu[instrument_indexes] = 1*20/n_instr
     elif scenario == 2:
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 0.4*5/n_conf
-        nu[instrument_indexes] = 1*5/n_instr
+        nu[confounder_indexes] = 0.4*20/n_conf
+        nu[instrument_indexes] = 1*20/n_instr
     elif scenario == 3:
         beta[confounder_indexes] = 0.2
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 0.4*5/n_conf
-        nu[instrument_indexes] = 1*5/n_instr
+        nu[confounder_indexes] = 0.4*20/n_conf
+        nu[instrument_indexes] = 1*20/n_instr
     else:
         assert (scenario == 4)
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 1*5/n_conf
-        nu[instrument_indexes] = 1.8*5/n_instr
+        nu[confounder_indexes] = 1*20/n_conf
+        nu[instrument_indexes] = 1.8*20/n_instr
     return beta, nu
 
 

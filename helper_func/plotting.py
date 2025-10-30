@@ -71,6 +71,14 @@ def plot_treatment_selection_proportion(selected_records, base_dir, d, cols_Xc, 
     sel_fig_path = os.path.join(base_dir, "treatment_model_selection_proportion_comparison.png")
     plt.savefig(sel_fig_path, dpi=300)
     plt.close()
+    
+    # Save selection proportion data
+    sel_data_path = os.path.join(base_dir, "treatment_model_selection_proportion_data.csv")
+    sel_data = {"covariate_index": np.arange(1, d + 1)}
+    for method in selected_records.keys():
+        sel_matrix = np.vstack(selected_records[method])
+        sel_data[method] = sel_matrix.mean(axis=0)
+    pd.DataFrame(sel_data).to_csv(sel_data_path, index=False)   
 
     print(f"✅ Treatment model selection proportion plot saved: {sel_fig_path}")
 
@@ -130,7 +138,7 @@ def plot_outcome_selection_proportion(selected_records_outcome, base_dir, d, col
     print(f"✅ Outcome model selection proportion data saved: {csv_path}")
     
 # ---------------------------------------------------------------------
-# 📊 4. True propensity score distribution by treatment
+# 📊 4. True and Estimated propensity score distribution by treatment
 # ---------------------------------------------------------------------
 def plot_true_ps_distribution(A, true_ps, rep, save_dir):
     """Plot true propensity score distribution stratified by treatment indicator."""
@@ -159,6 +167,38 @@ def plot_true_ps_distribution(A, true_ps, rep, save_dir):
     plot_path = f"{save_dir}/true_propensity_plot_rep{rep}.png"
     plt.savefig(plot_path, dpi=300)
     plt.close()
+
+def plot_best_ps_distribution(A, best_propensity_scores_hat, rep, save_dir):
+    """Plot estimated (best) propensity score distribution stratified by treatment indicator."""
+    # ensure numeric stability within (0,1)
+    best_propensity_scores_hat = np.clip(best_propensity_scores_hat, 1e-6, 1 - 1e-6)
+    
+    # create dataframe for plotting
+    df_plot = pd.DataFrame({"A": A, "best_ps_hat": best_propensity_scores_hat})
+    
+    plt.figure(figsize=(8, 5))
+    sns.kdeplot(
+        data=df_plot[df_plot.A == 1],
+        x="best_ps_hat", fill=True, alpha=0.5, color="orangered", label="A=1"
+    )
+    sns.kdeplot(
+        data=df_plot[df_plot.A == 0],
+        x="best_ps_hat", fill=True, alpha=0.5, color="royalblue", label="A=0"
+    )
+    plt.xlabel("Estimated Propensity Score")
+    plt.ylabel("Density")
+    plt.title("Distribution of Estimated Propensity Scores (Best λ)")
+    plt.legend()
+    plt.xlim(0, 1)
+    plt.tight_layout()
+
+    plot_path = f"{save_dir}/estimated_propensity_plot_rep{rep}.png"
+    plt.savefig(plot_path, dpi=300)
+    plt.close()
+    
+    # save data
+    data_path = f"{save_dir}/estimated_propensity_data_rep{rep}.csv"
+    df_plot.to_csv(data_path, index=False)
 
 # ---------------------------------------------------------------------
 # 5. wAMD before vs. after grid plot

@@ -13,5 +13,6 @@ from helper_func.plotting import (
     plot_treatment_selection_proportion,
     plot_outcome_selection_proportion,
     plot_true_ps_distribution,
-    plot_wamd_before_after_grid
+    plot_wamd_before_after_grid,
+    plot_best_ps_distribution
 )

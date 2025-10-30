@@ -42,7 +42,7 @@ selected_covariates_treatment = {"OAL": [], "IPWX": [], "Conf": [], "Targ": [], 
 selected_covariates_outcome = {"OAL": []}
 
 # Simulation parameters
-n, d, nrep, rho, eta = 200, 500, 30, 0, 0
+n, d, nrep, rho, eta = 1000, 8000, 5, 0, 0
 scenario_num = 4
 
 # Save parameters to a JSON file inside the results folder
@@ -92,8 +92,7 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
         f.write(str(amd_before))
     
     # --- Run Outcome Adaptive LASSO ---
-    # plot_save_path = os.path.join(base_dir, f"rep{rep}") if rep < 5 else None
-    ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat = calc_outcome_adaptive_lasso(
+    ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat, best_nus_hat = calc_outcome_adaptive_lasso(
         df["A"], df["Y"], df[cols_all], rep,
         plot=(rep < 5), 
         amd_save_path=amd_dir, 
@@ -119,12 +118,19 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     # Save betas_hat for all lambdas in this replication
     betas_hat_dir = os.path.join(base_dir, "betas_hat")
     os.makedirs(betas_hat_dir, exist_ok=True)
-    
     best_betas_hat_df = pd.DataFrame({
     "coef_index": [col for col in df if col.startswith("X")],
     "coef_value": best_betas_hat
     })
     best_betas_hat_df.to_csv(os.path.join(betas_hat_dir, f"betas_hat_best_rep{rep}.csv"), index=False)
+    # Save best_nus_hat
+    nus_hat_dir = os.path.join(base_dir, "nus_hat")
+    os.makedirs(nus_hat_dir, exist_ok=True)
+    best_nus_hat_df = pd.DataFrame({
+    "coef_index": [col for col in df if col.startswith("X")],
+    "coef_value": best_nus_hat
+    })
+    best_nus_hat_df.to_csv(os.path.join(nus_hat_dir, f"nus_hat_best_rep{rep}.csv"), index=False)
     
     # selection mask for the outcome model
     outcome_selected_mask = (np.abs(best_betas_hat) > 1e-8).astype(int)

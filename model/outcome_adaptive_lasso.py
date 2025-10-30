@@ -6,6 +6,7 @@ import os
 from sklearn.linear_model import LogisticRegression, LinearRegression, RidgeCV, LassoCV
 from math import log
 from causallib.estimation import IPW
+from helper_func.plotting import plot_best_ps_distribution
 import pdb
 
 def check_input(A, Y, X):
@@ -134,13 +135,17 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, betas_hat, Lambda, gamma_
     # fit logistic propensity score model from penalized covariates to the exposure
     logit = LogisticRegression(solver='liblinear', penalty='l1', C=1/Lambda)
     ipw = IPW(logit, use_stabilized=False).fit(X_w, A)
+    # predicted propensity scores
+    propensity_scores_hat = logit.predict_proba(X_w)[:, 1]
+    # estimated coefficients (on the original scale)
+    nus_hat = logit.coef_.flatten()
     # Selection indicator (nonzero coefficients)
     selected_mask = (np.abs(logit.coef_.flatten()) > 1e-8).astype(int)
     # compute inverse propensity weighting and calculate ATE
-    weights = ipw.compute_weights(X_w, A)
-    outcomes = ipw.estimate_population_outcome(X_w, A, Y, w=weights)
+    weights_ipw = ipw.compute_weights(X_w, A)
+    outcomes = ipw.estimate_population_outcome(X_w, A, Y, w=weights_ipw)
     effect = ipw.estimate_effect(outcomes[1], outcomes[0])
-    return effect, betas_hat, weights, selected_mask
+    return effect, nus_hat, weights_ipw, selected_mask, propensity_scores_hat
 
 
 def calc_outcome_adaptive_lasso(
@@ -165,7 +170,12 @@ def calc_outcome_adaptive_lasso(
     amd_vec = np.zeros(len(lambdas))
     wamd_vec = np.zeros(len(lambdas))
     ate_vec = np.zeros(len(lambdas))
-    selected_masks = []
+    selected_masks = np.zeros((len(lambdas), X.shape[1]))
+    propensity_scores_hat = np.zeros((len(lambdas), n))
+    nus_hat = np.zeros((len(lambdas), X.shape[1]))
+    # selected_masks = []
+    # propensity_scores_hat = []
+    # nus_hat = []
 
     # Calculate ATE for each lambda
     # Pre-fit outcome model to get betas_hat
@@ -174,7 +184,7 @@ def calc_outcome_adaptive_lasso(
     betas_hat = fit_outcome_model(A, Y, X, model_type='lasso', save_dir=outcome_model_save_path)
     
     for il, Lambda in enumerate(lambdas):
-        ate_vec[il], betas_hat, ipw, selected_mask = calc_outcome_adaptive_lasso_single_lambda(
+        ate_vec[il], nus_hat[il], ipw, selected_masks[il], propensity_scores_hat[il] = calc_outcome_adaptive_lasso_single_lambda(
             A, Y, X, betas_hat, Lambda, gamma_convergence_factor
         )
         amd_after_per_covariate = calc_amd_per_covariate(X.values, A.values, ipw.values)
@@ -185,7 +195,7 @@ def calc_outcome_adaptive_lasso(
         # [WRITE CODE TO SAVE amd_per_covariate AND wamd_per_covariate for each lambda]
         amd_vec[il] = amd_after
         wamd_vec[il] = wamd_after
-        selected_masks.append(selected_mask)
+        # selected_masks.append(selected_mask)
         
         # save amd_after_per_covariate and wamd_after_per_covariate for each lambda
         amd_after_df = pd.DataFrame({
@@ -203,6 +213,8 @@ def calc_outcome_adaptive_lasso(
     best_ate = ate_vec[best_idx]
     best_selected_mask = selected_masks[best_idx]
     best_betas_hat = betas_hat
+    best_propensity_scores_hat = propensity_scores_hat[best_idx]
+    best_nus_hat = nus_hat[best_idx]
 
     # Plot and save if requested
     if plot:
@@ -235,6 +247,13 @@ def calc_outcome_adaptive_lasso(
         os.makedirs(plot_save_path, exist_ok=True)
         plt.savefig(os.path.join(plot_save_path, f"amd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
         plt.close()
+        
+        # Plot propensity score distribution
+        plot_save_path = os.path.join(base_dir, "treatment_model")
+        os.makedirs(plot_save_path, exist_ok=True)
+        plot_best_ps_distribution(
+            A.values, best_propensity_scores_hat, rep, save_dir=plot_save_path
+        )
     
 
-    return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat
+    return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat, best_nus_hat
