@@ -9,9 +9,9 @@ import time
 from datetime import datetime
 import os
 import json
-from plotting import plot_ate_comparison, plot_treatment_selection_proportion, plot_outcome_selection_proportion
-
-from outcome_adaptive_lasso import calc_outcome_adaptive_lasso, generate_synthetic_dataset, calc_ate_vanilla_ipw, calc_wamd_per_covariate, calc_amd_per_covariate
+from helper_func.plotting import plot_ate_comparison, plot_treatment_selection_proportion, plot_outcome_selection_proportion, plot_wamd_before_after_grid
+from generate_data.synthetic_data_simulation import generate_synthetic_dataset
+from model.outcome_adaptive_lasso import calc_outcome_adaptive_lasso, calc_ate_vanilla_ipw, calc_wamd_per_covariate, calc_amd_per_covariate, fit_outcome_model
 
 warnings.filterwarnings(action='ignore') # ignore sklearn's ConvergenceWarning
 
@@ -21,6 +21,8 @@ warnings.filterwarnings(action='ignore') # ignore sklearn's ConvergenceWarning
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 base_dir = os.path.join("res", timestamp)
 os.makedirs(base_dir, exist_ok=True)
+data_dir = os.path.join(base_dir, "synthetic_data")
+os.makedirs(data_dir, exist_ok=True)
 # Save betas_hat for all lambdas in this replication
 betas_hat_dir = os.path.join(base_dir, "betas_hat")
 os.makedirs(betas_hat_dir, exist_ok=True)
@@ -59,7 +61,7 @@ with open(config_path, "w") as f:
     json.dump(config, f, indent=4)
     
 for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
-    df = generate_synthetic_dataset(n=n, d=d, rho=rho, eta=eta, scenario_num=scenario_num)
+    df = generate_synthetic_dataset(n=n, d=d, rho=rho, eta=eta, rep=rep, scenario_num=scenario_num, save_dir=data_dir)
 
     # Identify covariate subsets
     cols_Xc = [col for col in df if col.startswith("Xc")]
@@ -96,7 +98,7 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
         plot=(rep < 5), 
         amd_save_path=amd_dir, 
         wamd_save_path=wamd_dir,
-        plot_save_path=base_dir
+        base_dir=base_dir
     )
     
     wamd_before_per_covariate = calc_wamd_per_covariate(X_values, A_values, ipw_unweighted, best_betas_hat)
@@ -185,6 +187,6 @@ plot_outcome_selection_proportion(
     cols_Xp=cols_Xp,
     cols_Xi=cols_Xi
 )
-
+plot_wamd_before_after_grid(base_dir=wamd_dir, n_reps=5, n_lambdas=9, figsize=(18, 10))
 print("🎉 Simulation completed successfully.")
 

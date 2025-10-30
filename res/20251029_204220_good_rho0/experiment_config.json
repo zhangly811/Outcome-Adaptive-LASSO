@@ -1,0 +1,10 @@
+{
+    "n": 200,
+    "d": 500,
+    "nrep": 30,
+    "rho": 0,
+    "eta": 0,
+    "scenario_num": 4,
+    "outcome_model_type": "Lasso",
+    "timestamp": "20251029_204220"
+}
