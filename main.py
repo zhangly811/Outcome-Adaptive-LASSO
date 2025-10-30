@@ -91,7 +91,7 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     
     # --- Run Outcome Adaptive LASSO ---
     # plot_save_path = os.path.join(base_dir, f"rep{rep}") if rep < 5 else None
-    ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat, betas_hat_all = calc_outcome_adaptive_lasso(
+    ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat = calc_outcome_adaptive_lasso(
         df["A"], df["Y"], df[cols_all], rep,
         plot=(rep < 5), 
         amd_save_path=amd_dir, 
@@ -117,11 +117,6 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     # Save betas_hat for all lambdas in this replication
     betas_hat_dir = os.path.join(base_dir, "betas_hat")
     os.makedirs(betas_hat_dir, exist_ok=True)
-
-    # Optional: also save as CSV for inspection
-    betas_hat_df = pd.DataFrame(betas_hat_all, columns=[col for col in df if col.startswith("X")])
-    betas_hat_df["lambda_index"] = range(len(betas_hat_all))
-    betas_hat_df.to_csv(os.path.join(betas_hat_dir, f"betas_hat_rep{rep}.csv"), index=False)
     
     best_betas_hat_df = pd.DataFrame({
     "coef_index": [col for col in df if col.startswith("X")],

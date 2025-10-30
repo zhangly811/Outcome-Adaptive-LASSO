@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 import os
-from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression, RidgeCV
 from math import log
 from causallib.estimation import IPW
 import pdb
@@ -38,12 +38,6 @@ def calc_ate_vanilla_ipw(A, Y, X, return_selection=False):
         return effect[0], selected_mask
     else:
         return effect[0]
-
-
-# def calc_covariate_diff(X, idx_trt, ipw, l_norm):
-#     """Utility function to calculate the difference in covariates between treatment and control groups"""
-#     return (np.abs(np.average(X[idx_trt], weights=ipw[idx_trt], axis=0) -
-#                    np.average(X[~idx_trt], weights=ipw[~idx_trt], axis=0)))**l_norm
     
 def calc_amd_per_covariate(X, A, ipw, l_norm=1):
     """Utility function to calculate the difference in covariates between treatment and control groups"""
@@ -57,24 +51,33 @@ def calc_wamd_per_covariate(X, A, ipw, betas_hat, l_norm=1):
     return (np.abs(np.average(X[idx_trt], weights=ipw[idx_trt], axis=0) -
                    np.average(X[~idx_trt], weights=ipw[~idx_trt], axis=0)))**l_norm * np.abs(betas_hat)
     
-def calc_amd(X, A, ipw, betas_hat, l_norm=1):
-    return np.sum(calc_amd_per_covariate(X, A, ipw, betas_hat, l_norm))
+def calc_amd(X, A, ipw, l_norm=1):
+    return np.sum(calc_amd_per_covariate(X, A, ipw, l_norm))
 
 def calc_wamd(X, A, ipw, betas_hat, l_norm=1):
     return np.sum(calc_wamd_per_covariate(X, A, ipw, betas_hat, l_norm))
 
+def fit_outcome_model(A, Y, X):
+    """Fit ridge regression outcome model and return estimated coefficients."""
+    # Combine covariates and treatment
+    XA = X.merge(A.to_frame(), left_index=True, right_index=True)
+    
+    # Fit ridge regression with cross-validation to find optimal alpha
+    alphas = np.logspace(-4, 1, 10)
+    ridge_cv = RidgeCV(alphas=alphas, store_cv_values=True)
+    ridge_cv.fit(XA, Y)
+    
+    # Extract coefficients of the covariates (exclude treatment coefficient)
+    betas_hat = ridge_cv.coef_.flatten()[1:]
+    
+    return betas_hat, ridge_cv.alpha_
 
-def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, Lambda, gamma_convergence_factor):
+def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, betas_hat, Lambda, gamma_convergence_factor):
     """Calculate ATE with the outcome adaptive lasso"""
     n = A.shape[0]  # number of samples
     # extract gamma according to Lambda and gamma_convergence_factor
     gamma = 2 * (1 + gamma_convergence_factor - log(Lambda, n))
     
-    # fit # Outcome model
-    XA = X.merge(A.to_frame(), left_index=True, right_index=True)
-    lr = LinearRegression(fit_intercept=True).fit(XA, Y)
-    # extract the coefficients of the covariates
-    betas_hat = lr.coef_.flatten()[1:]
     # calculate outcome adaptive penalization weights
     weights = (np.abs(betas_hat)) ** (-1 * gamma)
     # apply the penalization to the covariates themselves
@@ -115,12 +118,14 @@ def calc_outcome_adaptive_lasso(
     wamd_vec = np.zeros(len(lambdas))
     ate_vec = np.zeros(len(lambdas))
     selected_masks = []
-    betas_hat_all = []
 
     # Calculate ATE for each lambda
+    # Pre-fit outcome model to get betas_hat
+    betas_hat, _ = fit_outcome_model(A, Y, X)
+    
     for il, Lambda in enumerate(lambdas):
         ate_vec[il], betas_hat, ipw, selected_mask = calc_outcome_adaptive_lasso_single_lambda(
-            A, Y, X, Lambda, gamma_convergence_factor
+            A, Y, X, betas_hat, Lambda, gamma_convergence_factor
         )
         amd_after_per_covariate = calc_amd_per_covariate(X.values, A.values, ipw.values)
         wamd_after_per_covariate = calc_wamd_per_covariate(X.values, A.values, ipw.values, betas_hat)
@@ -131,7 +136,6 @@ def calc_outcome_adaptive_lasso(
         amd_vec[il] = amd_after
         wamd_vec[il] = wamd_after
         selected_masks.append(selected_mask)
-        betas_hat_all.append(betas_hat) 
         
         # save amd_after_per_covariate and wamd_after_per_covariate for each lambda
         amd_after_df = pd.DataFrame({
@@ -148,7 +152,7 @@ def calc_outcome_adaptive_lasso(
     best_idx = np.argmin(wamd_vec)
     best_ate = ate_vec[best_idx]
     best_selected_mask = selected_masks[best_idx]
-    best_betas_hat = betas_hat_all[best_idx]
+    best_betas_hat = betas_hat
 
     # Plot and save if requested
     if plot:
@@ -191,4 +195,4 @@ def calc_outcome_adaptive_lasso(
         print(f"✅ Figure saved to: {plot_save_path}")
     
 
-    return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat, betas_hat_all
+    return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat
