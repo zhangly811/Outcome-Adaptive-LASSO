@@ -14,5 +14,7 @@ from helper_func.plotting import (
     plot_outcome_selection_proportion,
     plot_true_ps_distribution,
     plot_wamd_before_after_grid,
-    plot_best_ps_distribution
+    plot_best_ps_distribution,
+    plot_amd_vs_loglambda,
+    plot_wamd_vs_loglambda
 )

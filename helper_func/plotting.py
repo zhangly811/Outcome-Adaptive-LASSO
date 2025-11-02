@@ -168,7 +168,7 @@ def plot_true_ps_distribution(A, true_ps, rep, save_dir):
     plt.savefig(plot_path, dpi=300)
     plt.close()
 
-def plot_best_ps_distribution(A, best_propensity_scores_hat, rep, save_dir):
+def plot_best_ps_distribution(A, best_propensity_scores_hat, rep, base_dir):
     """Plot estimated (best) propensity score distribution stratified by treatment indicator."""
     # ensure numeric stability within (0,1)
     best_propensity_scores_hat = np.clip(best_propensity_scores_hat, 1e-6, 1 - 1e-6)
@@ -187,18 +187,18 @@ def plot_best_ps_distribution(A, best_propensity_scores_hat, rep, save_dir):
     )
     plt.xlabel("Estimated Propensity Score")
     plt.ylabel("Density")
-    plt.title("Distribution of Estimated Propensity Scores (Best λ)")
+    plt.title("Distribution of Estimated Propensity Scores")
     plt.legend()
     plt.xlim(0, 1)
     plt.tight_layout()
 
-    plot_path = f"{save_dir}/estimated_propensity_plot_rep{rep}.png"
-    plt.savefig(plot_path, dpi=300)
+    save_path = os.path.join(base_dir, "treatment_model")
+    os.makedirs(save_path, exist_ok=True)
+    plt.savefig(os.path.join(save_path, f"estimated_propensity_plot_rep{rep}.png"), dpi=300)
     plt.close()
     
     # save data
-    data_path = f"{save_dir}/estimated_propensity_data_rep{rep}.csv"
-    df_plot.to_csv(data_path, index=False)
+    df_plot.to_csv(os.path.join(save_path, f"estimated_propensity_data_rep{rep}.csv"), index=False)
 
 # ---------------------------------------------------------------------
 # 5. wAMD before vs. after grid plot
@@ -262,3 +262,37 @@ def plot_wamd_before_after_grid(base_dir, n_reps=5, n_lambdas=9, figsize=(18, 10
     plt.close()
     print(f"✅ wAMD before/after grid saved to: {out_path}")
 
+# ---------------------------------------------------------------------
+# 6. AMD and wAMD vs log(lambda) plots
+# ---------------------------------------------------------------------
+def plot_amd_vs_loglambda(log_lambdas, amd_vec, best_idx, rep, base_dir):
+    plt.figure(figsize=(7, 4))
+    plt.plot(log_lambdas, amd_vec, marker='o', color='steelblue')
+    plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
+    plt.title("Absolute Mean Difference vs log(Lambda)")
+    plt.xlabel("log(Lambda)")
+    plt.ylabel("Absolute Mean Difference (AMD)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    # Determine save path
+    plot_save_path = os.path.join(base_dir, "treatment_model")
+    os.makedirs(plot_save_path, exist_ok=True)
+    plt.savefig(os.path.join(plot_save_path, f"amd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
+    plt.close()
+    
+def plot_wamd_vs_loglambda(log_lambdas, wamd_vec, best_idx, rep, base_dir):
+    plt.figure(figsize=(7, 4))
+    plt.plot(log_lambdas, wamd_vec, marker='o', color='steelblue')
+    plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
+    plt.title("Weighted Absolute Mean Difference vs log(Lambda)")
+    plt.xlabel("log(Lambda)")
+    plt.ylabel("Weighted Absolute Mean Difference (wAMD)")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    # Determine save path
+    plot_save_path = os.path.join(base_dir, "treatment_model")
+    os.makedirs(plot_save_path, exist_ok=True)
+    plt.savefig(os.path.join(plot_save_path, f"wamd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
+    plt.close()

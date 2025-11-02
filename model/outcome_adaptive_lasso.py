@@ -6,7 +6,7 @@ import os
 from sklearn.linear_model import LogisticRegression, LinearRegression, RidgeCV, LassoCV
 from math import log
 from causallib.estimation import IPW
-from helper_func.plotting import plot_best_ps_distribution
+from helper_func.plotting import plot_best_ps_distribution, plot_amd_vs_loglambda, plot_wamd_vs_loglambda
 import pdb
 
 def check_input(A, Y, X):
@@ -59,7 +59,7 @@ def calc_amd(X, A, ipw, l_norm=1):
 def calc_wamd(X, A, ipw, betas_hat, l_norm=1):
     return np.sum(calc_wamd_per_covariate(X, A, ipw, betas_hat, l_norm))
 
-def fit_outcome_model(A, Y, X, model_type='ridge', save_dir=None):
+def fit_outcome_model(A, Y, X, rep, model_type='ridge', save_dir=None):
     """Fit ridge regression outcome model and return estimated coefficients."""
     # Combine covariates and treatment
     XA = X.merge(A.to_frame(), left_index=True, right_index=True)
@@ -80,7 +80,7 @@ def fit_outcome_model(A, Y, X, model_type='ridge', save_dir=None):
         title = "RidgeCV: Alpha vs Mean Cross-Validation MSE"
 
     elif model_type == 'lasso':
-        model_cv = LassoCV(alphas=alphas, max_iter=1000)
+        model_cv = LassoCV(alphas=alphas, max_iter=10000)
         model_cv.fit(XA, Y)
         alpha_scores = pd.DataFrame({
             "alpha": model_cv.alphas_,
@@ -92,10 +92,6 @@ def fit_outcome_model(A, Y, X, model_type='ridge', save_dir=None):
 
     else:
         raise ValueError("model_type must be 'ridge' or 'lasso'")
-
-    # --- Save alpha scores ---
-    score_path = os.path.join(save_dir, f"alpha_scores_{model_type}.csv")
-    alpha_scores.to_csv(score_path, index=False)
 
     # --- Plot alpha vs CV scores ---
     plt.figure(figsize=(7, 5))
@@ -111,11 +107,10 @@ def fit_outcome_model(A, Y, X, model_type='ridge', save_dir=None):
     plt.legend()
     plt.tight_layout()
 
-    plot_path = os.path.join(save_dir, f"{model_type}_alpha_cv_plot.png")
+    plot_path = os.path.join(save_dir, f"{model_type}_alpha_cv_rep{rep}.png")
     plt.savefig(plot_path, dpi=300)
     plt.close()
 
-    
     # Extract coefficients of the covariates (exclude treatment coefficient)
     betas_hat = model_cv.coef_.flatten()[1:]
     
@@ -138,7 +133,7 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, betas_hat, Lambda, gamma_
     # predicted propensity scores
     propensity_scores_hat = logit.predict_proba(X_w)[:, 1]
     # estimated coefficients (on the original scale)
-    nus_hat = logit.coef_.flatten()
+    nus_hat = logit.coef_.flatten() / weights
     # Selection indicator (nonzero coefficients)
     selected_mask = (np.abs(logit.coef_.flatten()) > 1e-8).astype(int)
     # compute inverse propensity weighting and calculate ATE
@@ -150,15 +145,14 @@ def calc_outcome_adaptive_lasso_single_lambda(A, Y, X, betas_hat, Lambda, gamma_
 
 def calc_outcome_adaptive_lasso(
     A, Y, X, rep, gamma_convergence_factor=2, log_lambdas=None, 
-    plot=True, amd_save_path=None, wamd_save_path=None, base_dir=None):
+    plot=True, amd_save_path=None, wamd_save_path=None, base_dir=None):     
+
     """Calculate estimate of average treatment effect using the outcome adaptive LASSO (Shortreed and Ertefaie, 2017).
     Optionally save the AMD vs log(lambda) figure.
     """
-    # Determine save path
-    if amd_save_path is None:
-        amd_save_path = os.path.join(os.getcwd())
-    if wamd_save_path is None:
-        wamd_save_path = os.path.join(os.getcwd())
+
+    outcome_model_save_path = os.path.join(base_dir, "outcome_model")
+    os.makedirs(outcome_model_save_path, exist_ok=True)
         
     A, Y, X = check_input(A, Y, X)
 
@@ -173,15 +167,10 @@ def calc_outcome_adaptive_lasso(
     selected_masks = np.zeros((len(lambdas), X.shape[1]))
     propensity_scores_hat = np.zeros((len(lambdas), n))
     nus_hat = np.zeros((len(lambdas), X.shape[1]))
-    # selected_masks = []
-    # propensity_scores_hat = []
-    # nus_hat = []
 
     # Calculate ATE for each lambda
     # Pre-fit outcome model to get betas_hat
-    outcome_model_save_path = os.path.join(base_dir, "outcome_model", f"rep{rep}")
-    os.makedirs(outcome_model_save_path, exist_ok=True)
-    betas_hat = fit_outcome_model(A, Y, X, model_type='lasso', save_dir=outcome_model_save_path)
+    betas_hat = fit_outcome_model(A, Y, X, rep, model_type='lasso', save_dir=outcome_model_save_path)
     
     for il, Lambda in enumerate(lambdas):
         ate_vec[il], nus_hat[il], ipw, selected_masks[il], propensity_scores_hat[il] = calc_outcome_adaptive_lasso_single_lambda(
@@ -191,12 +180,9 @@ def calc_outcome_adaptive_lasso(
         wamd_after_per_covariate = calc_wamd_per_covariate(X.values, A.values, ipw.values, betas_hat)
         amd_after = np.sum(amd_after_per_covariate)
         wamd_after = np.sum(wamd_after_per_covariate)
-        # save calculated_group_diff
-        # [WRITE CODE TO SAVE amd_per_covariate AND wamd_per_covariate for each lambda]
         amd_vec[il] = amd_after
         wamd_vec[il] = wamd_after
-        # selected_masks.append(selected_mask)
-        
+
         # save amd_after_per_covariate and wamd_after_per_covariate for each lambda
         amd_after_df = pd.DataFrame({
             "covariate_index": [col for col in X.columns],
@@ -218,42 +204,9 @@ def calc_outcome_adaptive_lasso(
 
     # Plot and save if requested
     if plot:
-        plt.figure(figsize=(7, 4))
-        plt.plot(log_lambdas, wamd_vec, marker='o', color='steelblue')
-        plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
-        plt.title("Weighted Absolute Mean Difference vs log(Lambda)")
-        plt.xlabel("log(Lambda)")
-        plt.ylabel("Weighted Absolute Mean Difference (wAMD)")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        # Determine save path
-        plot_save_path = os.path.join(base_dir, "wamd_vs_loglambda")
-        os.makedirs(plot_save_path, exist_ok=True)
-        plt.savefig(os.path.join(plot_save_path, f"wamd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
-        plt.close()
-
-        plt.figure(figsize=(7, 4))
-        plt.plot(log_lambdas, amd_vec, marker='o', color='steelblue')
-        plt.axvline(log_lambdas[best_idx], color='r', linestyle='--', label='Min wAMD')
-        plt.title("Absolute Mean Difference vs log(Lambda)")
-        plt.xlabel("log(Lambda)")
-        plt.ylabel("Absolute Mean Difference (AMD)")
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        plt.tight_layout()
-        # Determine save path
-        plot_save_path = os.path.join(base_dir, "amd_vs_loglambda")
-        os.makedirs(plot_save_path, exist_ok=True)
-        plt.savefig(os.path.join(plot_save_path, f"amd_vs_loglambda_rep{rep}.png"), dpi=300, bbox_inches='tight')
-        plt.close()
-        
-        # Plot propensity score distribution
-        plot_save_path = os.path.join(base_dir, "treatment_model")
-        os.makedirs(plot_save_path, exist_ok=True)
-        plot_best_ps_distribution(
-            A.values, best_propensity_scores_hat, rep, save_dir=plot_save_path
-        )
+        plot_amd_vs_loglambda(log_lambdas, amd_vec, best_idx, rep, base_dir)
+        plot_wamd_vs_loglambda(log_lambdas, wamd_vec, best_idx, rep, base_dir)
+        plot_best_ps_distribution(A.values, best_propensity_scores_hat, rep, base_dir)
     
-
     return best_ate, wamd_vec, ate_vec, best_selected_mask, best_betas_hat, best_nus_hat
+

@@ -26,6 +26,9 @@ os.makedirs(data_dir, exist_ok=True)
 # Save betas_hat for all lambdas in this replication
 betas_hat_dir = os.path.join(base_dir, "betas_hat")
 os.makedirs(betas_hat_dir, exist_ok=True)
+# Save nus_hat
+nus_hat_dir = os.path.join(base_dir, "nus_hat")
+os.makedirs(nus_hat_dir, exist_ok=True)
 # Save amd for all lambdas in this replication
 amd_dir = os.path.join(base_dir, "amd")
 os.makedirs(amd_dir, exist_ok=True)
@@ -42,7 +45,7 @@ selected_covariates_treatment = {"OAL": [], "IPWX": [], "Conf": [], "Targ": [], 
 selected_covariates_outcome = {"OAL": []}
 
 # Simulation parameters
-n, d, nrep, rho, eta = 1000, 8000, 5, 0, 0
+n, d, nrep, rho, eta = 1000, 8000, 5, 0.0005, 0
 scenario_num = 4
 
 # Save parameters to a JSON file inside the results folder
@@ -62,7 +65,7 @@ with open(config_path, "w") as f:
     
 for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     df = generate_synthetic_dataset(n=n, d=d, rho=rho, eta=eta, rep=rep, scenario_num=scenario_num, save_dir=data_dir)
-
+    import pdb; pdb.set_trace()
     # Identify covariate subsets
     cols_Xc = [col for col in df if col.startswith("Xc")]
     cols_Xp = [col for col in df if col.startswith("Xp")]
@@ -75,21 +78,6 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     idx_Xp = np.arange(len(cols_Xc), len(cols_Xc) + len(cols_Xp))
     idx_Xi = np.arange(len(cols_Xc) + len(cols_Xp),
                        len(cols_Xc) + len(cols_Xp) + len(cols_Xi))
-
-    # --- Calculate AMD and wAMD before propensity weighting ---
-    A_values = df["A"].values
-    X_values = df[cols_all].values
-    ipw_unweighted = np.ones_like(A_values)
-    amd_before_per_covariate = calc_amd_per_covariate(X_values, A_values, ipw_unweighted)
-    amd_before = np.sum(amd_before_per_covariate)
-    # save amd_before_per_covariate and amd_before as csv
-    amd_before_df = pd.DataFrame({
-        "covariate_index": [col for col in df if col.startswith("X")],
-        "amd_before": amd_before_per_covariate
-    })
-    amd_before_df.to_csv(os.path.join(amd_dir, f"amd_before_per_covariate_rep{rep}.csv"), index=False)
-    with open(os.path.join(amd_dir, f"amd_before_rep{rep}.txt"), "w") as f:
-        f.write(str(amd_before))
     
     # --- Run Outcome Adaptive LASSO ---
     ate_oal, wamd_vec, ate_vec, selected_mask_oal, best_betas_hat, best_nus_hat = calc_outcome_adaptive_lasso(
@@ -100,6 +88,23 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
         base_dir=base_dir
     )
     
+    # --- Calculate AMD and wAMD before and after propensity weighting ---
+    # Before weighting
+    A_values = df["A"].values
+    X_values = df[cols_all].values
+    ipw_unweighted = np.ones_like(A_values)
+    # AMD before IPW weighting
+    amd_before_per_covariate = calc_amd_per_covariate(X_values, A_values, ipw_unweighted)
+    amd_before = np.sum(amd_before_per_covariate)
+    # save amd_before_per_covariate and amd_before as csv
+    amd_before_df = pd.DataFrame({
+        "covariate_index": [col for col in df if col.startswith("X")],
+        "amd_before": amd_before_per_covariate
+    })
+    amd_before_df.to_csv(os.path.join(amd_dir, f"amd_before_per_covariate_rep{rep}.csv"), index=False)
+    with open(os.path.join(amd_dir, f"amd_before_rep{rep}.txt"), "w") as f:
+        f.write(str(amd_before))
+    # wAMD before IPW weighting
     wamd_before_per_covariate = calc_wamd_per_covariate(X_values, A_values, ipw_unweighted, best_betas_hat)
     wamd_before = np.sum(wamd_before_per_covariate)
     # save wamd_before_per_covariate and wamd_before as csv
@@ -116,16 +121,13 @@ for rep in tqdm(range(nrep), desc="Simulation Progress", ncols=80):
     full_mask_oal[:len(selected_mask_oal)] = selected_mask_oal
 
     # Save betas_hat for all lambdas in this replication
-    betas_hat_dir = os.path.join(base_dir, "betas_hat")
-    os.makedirs(betas_hat_dir, exist_ok=True)
     best_betas_hat_df = pd.DataFrame({
     "coef_index": [col for col in df if col.startswith("X")],
     "coef_value": best_betas_hat
     })
     best_betas_hat_df.to_csv(os.path.join(betas_hat_dir, f"betas_hat_best_rep{rep}.csv"), index=False)
+    
     # Save best_nus_hat
-    nus_hat_dir = os.path.join(base_dir, "nus_hat")
-    os.makedirs(nus_hat_dir, exist_ok=True)
     best_nus_hat_df = pd.DataFrame({
     "coef_index": [col for col in df if col.startswith("X")],
     "coef_value": best_nus_hat
