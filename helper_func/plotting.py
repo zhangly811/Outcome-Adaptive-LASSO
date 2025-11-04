@@ -203,7 +203,7 @@ def plot_best_ps_distribution(A, best_propensity_scores_hat, rep, base_dir):
 # ---------------------------------------------------------------------
 # 5. wAMD before vs. after grid plot
 # ---------------------------------------------------------------------
-def plot_wamd_before_after_grid(base_dir, n_reps=5, n_lambdas=9, figsize=(18, 10)):
+def plot_wamd_before_after_grid(wamd_dir, n_reps=5, n_lambdas=9, figsize=(18, 10)):
     """
     Plot scatter plots comparing wAMD before vs. after for each covariate,
     across multiple reps (rows) and lambdas (columns).
@@ -214,12 +214,13 @@ def plot_wamd_before_after_grid(base_dir, n_reps=5, n_lambdas=9, figsize=(18, 10
         n_lambdas (int): Number of lambda values per rep (columns).
         figsize (tuple): Size of the overall figure.
     """
+    base_dir = os.path.dirname(wamd_dir)
     fig, axes = plt.subplots(n_reps, n_lambdas, figsize=figsize, sharex=True, sharey=True)
     fig.subplots_adjust(wspace=0.3, hspace=0.3)
 
     for rep in range(n_reps):
         # Load wAMD before file
-        before_path = os.path.join(base_dir, f"wamd_before_per_covariate_rep{rep}.csv")
+        before_path = os.path.join(wamd_dir, f"wamd_before_per_covariate_rep{rep}.csv")
         if not os.path.exists(before_path):
             print(f"⚠️ Missing file: {before_path}, skipping rep {rep}")
             continue
@@ -228,7 +229,7 @@ def plot_wamd_before_after_grid(base_dir, n_reps=5, n_lambdas=9, figsize=(18, 10
 
         for lam in range(n_lambdas):
             ax = axes[rep, lam] if n_reps > 1 else axes[lam]
-            after_path = os.path.join(base_dir, f"wamd_after_per_covariate_rep{rep}_lambda{lam}.csv")
+            after_path = os.path.join(wamd_dir, f"wamd_after_per_covariate_rep{rep}_lambda{lam}.csv")
             if not os.path.exists(after_path):
                 ax.axis("off")
                 continue
@@ -257,7 +258,7 @@ def plot_wamd_before_after_grid(base_dir, n_reps=5, n_lambdas=9, figsize=(18, 10
     plt.suptitle("wAMD Before vs. After (First 5 Reps × 9 Lambdas)", fontsize=14, y=1.02)
 
     fig.tight_layout(rect=[0.05, 0.05, 1, 0.95])
-    out_path = os.path.join(base_dir, "0_wamd_before_after_grid.png")
+    out_path = os.path.join(base_dir, "wamd_before_after_grid.png")
     plt.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"✅ wAMD before/after grid saved to: {out_path}")

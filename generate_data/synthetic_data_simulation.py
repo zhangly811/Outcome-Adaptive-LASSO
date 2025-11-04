@@ -4,9 +4,10 @@ import os
 from scipy.special import expit
 from sklearn.preprocessing import StandardScaler
 from helper_func.plotting import plot_true_ps_distribution
+import json
 
 
-def generate_col_names(d, prop_confounders=0.1, prop_predictors=0.1, prop_instruments=0.1):
+def generate_col_names(d, prop_confounders, prop_predictors, prop_instruments):
     """Utility function to generate column names for the synthetic dataset """
     assert (d >= 6)
     pC = int(d*prop_confounders)  # number of confounders
@@ -18,7 +19,7 @@ def generate_col_names(d, prop_confounders=0.1, prop_predictors=0.1, prop_instru
     return col_names
 
 
-def load_dgp_scenario(scenario, d, prop_confounders=0.1, prop_predictors=0.1, prop_instruments=0.1):
+def load_dgp_scenario(scenario, d, prop_confounders, prop_predictors, prop_instruments):
     """Utility function to load predefined scenarios with variable dimension d.
     The first 2% of d are confounders, the next 2% are predictors, 
     and the next 2% are exposures.
@@ -36,29 +37,30 @@ def load_dgp_scenario(scenario, d, prop_confounders=0.1, prop_predictors=0.1, pr
     if scenario == 1:
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 1*20/n_conf
-        nu[instrument_indexes] = 1*20/n_instr
+        nu[confounder_indexes] = 1*2/n_conf
+        nu[instrument_indexes] = 1*2/n_instr
     elif scenario == 2:
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 0.4*20/n_conf
-        nu[instrument_indexes] = 1*20/n_instr
+        nu[confounder_indexes] = 0.4*2/n_conf
+        nu[instrument_indexes] = 1*2/n_instr
     elif scenario == 3:
         beta[confounder_indexes] = 0.2
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 0.4*20/n_conf
-        nu[instrument_indexes] = 1*20/n_instr
+        nu[confounder_indexes] = 0.4*2/n_conf
+        nu[instrument_indexes] = 1*2/n_instr
     else:
         assert (scenario == 4)
         beta[confounder_indexes] = 0.6
         beta[predictor_indexes] = 0.6
-        nu[confounder_indexes] = 1*20/n_conf
-        nu[instrument_indexes] = 1.8*20/n_instr
+        nu[confounder_indexes] = 1.8*2/n_conf
+        nu[instrument_indexes] = 1.8*2/n_instr
     return beta, nu
 
 
-def generate_synthetic_dataset(n=1000, d=100, rho=0, eta=0, scenario_num=1, rep=1, save_dir=None):
-    """Generate a simulated dataset according to the settings described in section 4.1 of the paper
+def generate_synthetic_dataset(n, d, rho, eta, prop_confounders, prop_predictors, prop_instruments, scenario_num, rep, save_dir):
+    """
+    Generate a simulated dataset according to the settings described in section 4.1 of the paper
     Covariates X are zero mean unit variance Gaussians with correlation rho
     Exposure A is logistic in X: logit(P(A=1)) = nu.T*X (nu is set according to scenario_num)
     Outcome Y is linear in A and X: Y =  eta*A + beta.T*X + N(0,1)
@@ -80,8 +82,6 @@ def generate_synthetic_dataset(n=1000, d=100, rho=0, eta=0, scenario_num=1, rep=
     df : DataFrame of n rows and d+2 columns: A, Y and d covariates.
          Covariates are named Xc if they are confounders, Xi if they are instrumental variables,
          Xp if they are predictors of outcome and Xs if they are spurious
-    TODO:
-     * Enable manual selection of nu and beta
     """
     cov_x = np.eye(d) + ~np.eye(d, dtype=bool) * rho  # covariance matrix of the Gaussian covariates.
     # Variance of each covariate is 1, correlation coefficient of every pair is rho
@@ -91,7 +91,7 @@ def generate_synthetic_dataset(n=1000, d=100, rho=0, eta=0, scenario_num=1, rep=
     scaler.fit_transform(X)
  
     # Load beta and nu from the predefined scenarios
-    beta, nu = load_dgp_scenario(scenario_num, d)
+    beta, nu = load_dgp_scenario(scenario_num, d, prop_confounders, prop_predictors, prop_instruments)
     if rep==1:
         #save beta and nu for the first replication
         param_df = pd.DataFrame({
@@ -107,7 +107,7 @@ def generate_synthetic_dataset(n=1000, d=100, rho=0, eta=0, scenario_num=1, rep=
     Y = np.random.randn(n) + eta * A + np.dot(X, beta)
     
     # Create DataFrame
-    col_names = generate_col_names(d)
+    col_names = generate_col_names(d, prop_confounders, prop_predictors, prop_instruments)
     df = pd.DataFrame(np.hstack([A.reshape(-1, 1), Y.reshape(-1, 1), X]), columns=col_names)
     
     # plot true propensity score distribution and save it
